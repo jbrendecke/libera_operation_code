@@ -422,7 +422,7 @@ else:
     season = 0
     
 #//////////////////LOAD SSF Non-cloud properties///////////////////////////////
-path_ceres ='/home/jbrendecke/rad_global/SSF_cloud/data/Terra/'
+path_ceres ='/home/CCCma/input_data/CERES/ssf/'
 filessf = glob.glob(path_ceres+'*'+yymmdd+'*.nc')
 dc = xr.open_dataset(filessf[0])
 time_ssf=np.array(dc.time).copy()
@@ -450,8 +450,8 @@ nlay = nlev-1
 
 
 #////////////////////////ERA5 Atmospheric Profiles////////////////////////////
-file_lev = glob.glob('/home/jbrendecke/rad_global/ERA5/*level*'+yymmdd+'*.nc')[0]
-file_sfc = glob.glob('/home/jbrendecke/rad_global/ERA5/*surface*'+yymmdd+'*.nc')[0]
+file_lev = glob.glob('/home/CCCma/input_data/ERA5/levels/*level*'+yymmdd+'*.nc')[0]
+file_sfc = glob.glob('/home/CCCma/input_data/ERA5/surface/*surface*'+yymmdd+'*.nc')[0]
 
 if not os.path.isfile(file_lev) | os.path.isfile(file_sfc):
     logging.error('ERA5 File Not Found')
@@ -582,8 +582,8 @@ for ilg in range(5):#range(nloop+1):
     swd = swd_dir + swd_dif
     swd_clr = swd_dir_clr + swd_dif_clr    
     
-    swd_toa_nir[indi] = 1365 *np.cos(sza *(np.pi/180)) * .55
-    swd_toa_vis[indi] = 1365 *np.cos(sza *(np.pi/180)) * .45
+    swd_toa_nir[indi] = 1361 *np.cos(sza *(np.pi/180)) * .55
+    swd_toa_vis[indi] = 1361 *np.cos(sza *(np.pi/180)) * .45
     swu_toa_all_nir[indi] = toa *.55
     swu_toa_all_vis[indi] = toa * .45
     swu_toa_clr_nir[indi] = toa_clr *.55
@@ -721,6 +721,6 @@ for ilg in range(5):#range(nloop+1):
         }
     
     #ds_output = xr.Dataset(output_dict, coords=coords_dict)
-    #ds_output.to_netcdf(f'/home/jbrendecke/rad_global/SSF_cloud/SimpleRTM_output/Allsky_SimpleRTM_era5_SSF_{yymmdd}____.nc')
+    #ds_output.to_netcdf(f'/home/CCCma/L2/output/Allsky_SimpleRTM_era5_SSF_{yymmdd}____.nc')
     
     
