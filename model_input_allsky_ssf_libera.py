@@ -47,6 +47,54 @@ def set_jday(iyr, imo, iday):
     iddd = idymon[irow][imo-1] + iday
     return iddd
 #//////////////////////////////////////////////////////////////////////////////
+def zenith(utc, lat, lon):
+        # INPUTS: 
+        #	utc	flt or fltarr: the time (UTC) as days since Jan 1 00:00 of the year
+        #		e.g. the time 0.5 is noon of Jan 1st.
+        #		(presently it also works for the following year, if the first year
+        #		 had 365 days. I.e it works for the NOXAR times for 1995 and 1996 but
+        #		 not yet for 1997
+        #	lat	flt or fltarr: the latitude in deg (pos. for northern hemisphere)
+        #	lon	flt or fltarr: the longitude in deg (pos. for eastern longitudes)
+        # OUTPUTS
+        #	the solar zenith angle in radian
+    #dim=min(len(utc),len(lat),len(lon))
+    #utc=utc[0:dim] if len(utc) > dim else utc
+    #lat=lat[0:dim] if len(lat) > dim else lat
+    #lon=lon[0:dim] if len(lon) > dim else lon
+    
+    if lon > 180:
+        lon -= 360
+
+    # calculate the number of days since the 1.1. of the specific year
+    daynum=np.floor(utc)+1
+    #calculate the relative SUN-earth distance for the given day
+    #resulting from the elliptic orbit of the earth
+    eta=2.*np.pi*daynum/365.
+  
+    #calculate the solar declination for the given day
+    # the declination varies due to the fact, that the earth rotation axis
+    # is not perpendicular to the ecliptic plane
+    delta=0.006918 \
+    -0.399912*np.cos(eta)-0.006758*np.cos(2*eta)-0.002697*np.cos(3*eta) \
+    +0.070257*np.sin(eta)+0.000907*np.sin(2*eta)+0.001480*np.sin(3*eta)
+    
+    #equation of time, used to compensate for the earth's elliptical orbit
+    # around the sun and its axial tilt when calculating solar time
+    # eqt is the correction in hours
+    et=2.*np.pi*daynum/366.
+    eqt=0.0072*np.cos(et)-0.0528*np.cos(2.*et)-0.0012*np.cos(3.*et) \
+    -0.1229*np.sin(et)-0.1565*np.sin(2.*et)-0.0041*np.sin(3.*et)
+    
+    #calculate SZA
+    dtr=np.pi/180.
+    time=(utc+1-daynum)*24 #time in hours
+    omega=(360/24)*(time+lon/15+eqt-12)*dtr
+    sinh=np.sin(delta)*np.sin(lat*dtr)+np.cos(delta)*np.cos(lat*dtr)*np.cos(omega)
+    solel=np.arcsin(sinh)
+    sza=np.pi/2-solel
+    
+    return sza
 
 # get profiles from reanalysis
 def get_atmo_profiles(dataset_lev, dataset_sfc, lat_fp, lon_fp, time_fp, lyr):
@@ -156,6 +204,8 @@ def get_atmo_profiles(dataset_lev, dataset_sfc, lat_fp, lon_fp, time_fp, lyr):
         o3x[zz-1] = (o3x[zz-1]+o3x[zz])/2
     
     return presx, htx, tempa, qva, rhx, o3a
+
+
 #//////////////////////////////////////////////////////////////////////////////
 
 # determine cloud profiles of Rc/Ri and LWC/IWC
@@ -422,7 +472,7 @@ else:
     season = 0
     
 #//////////////////LOAD SSF Non-cloud properties///////////////////////////////
-path_ceres ='/home/CCCma/input_data/CERES/ssf/'
+path_ceres ='/home/CCCma/L2/input_data/CERES/'
 filessf = glob.glob(path_ceres+'*'+yymmdd+'*.nc')
 dc = xr.open_dataset(filessf[0])
 time_ssf=np.array(dc.time).copy()
@@ -450,15 +500,151 @@ nlay = nlev-1
 
 
 #////////////////////////ERA5 Atmospheric Profiles////////////////////////////
-file_lev = glob.glob('/home/CCCma/input_data/ERA5/levels/*level*'+yymmdd+'*.nc')[0]
-file_sfc = glob.glob('/home/CCCma/input_data/ERA5/surface/*surface*'+yymmdd+'*.nc')[0]
+file_lev = glob.glob('/home/CCCma/L2/input_data/ERA5/levels/*level*'+yymmdd+'*.nc')[0]
+file_sfc = glob.glob('/home/CCCma/L2/input_data/ERA5/surface/*surface*'+yymmdd+'*.nc')[0]
 
 if not os.path.isfile(file_lev) | os.path.isfile(file_sfc):
     logging.error('ERA5 File Not Found')
-    
+
 #open dataset and select 1 deg positions
 dl = xr.open_dataset(file_lev)
 ds = xr.open_dataset(file_sfc)
+
+
+#def new_world_reanalysis(dataset_lev, dataset_sfc):
+#convert geopotential to altitude
+earth_radius = 6378137 
+dl['z'] = dl['z']/9.8
+ds['z'] = ds['z']/9.8
+dl['z'] = (earth_radius * dl['z'] / (earth_radius - dl['z']))/1000
+ds['z'] = (earth_radius * ds['z'] / (earth_radius - ds['z']))/1000
+
+#determine specifc humidity from dewpoint/pressure
+q_sfc = specific_humidity_from_dewpoint(ds['sp']/100 * units.hPa, ds['d2m'] * units.kelvin)
+rh_sfc = relative_humidity_from_dewpoint(ds['t2m'] * units.kelvin, ds['d2m'] * units.kelvin)*100
+
+#make sure variables are not negative
+dl['r'] = xr.where(dl['r'] < 0, 0, dl['r'])
+dl['r'] = xr.where(dl['r'] > 100, 100, dl['r'])
+dl['q'] = xr.where(dl['q'] < 0, 0, dl['q'])
+dl['o3'] = xr.where(dl['o3'] < 0, 0, dl['o3'])
+dl['t'] = xr.where(dl['t'] < 0, 300, dl['t'])
+
+#set variables equal to NaN where pressure levels in levels dataset are higher than surface pressure(i.e. below ground)
+sp = ds['sp']/100
+expanded_sp = sp.expand_dims({'pressure_level': dl.pressure_level}, axis=1)
+mask = dl.pressure_level > expanded_sp
+dl = dl.where(~mask)
+    
+#extract variables from era5 
+time_era5 = dl.time.data
+lat_era5 = dl.latitude.data 
+lon_era5 = dl.longitude.data  
+p_lev = dl['pressure_level'].data
+z_lev = dl['z'].data
+t_lev = dl['t'].data
+q_lev = dl['q'].data
+rh_lev = dl['r'].data
+o3_lev = dl['o3'].data
+p_sfc = ds['sp'].data/100
+z_sfc = ds['z'].data
+t_sfc = ds['t2m'].data
+sys.exit()
+presx = np.zeros((24,41,721,1440))
+hgtx = np.zeros((24,41,721,1440))
+tempx = np.zeros((24,41,721,1440))
+qvx = np.zeros((24,41,721,1440))
+rhx = np.zeros((24,41,721,1440))
+o3x = np.zeros((24,41,721,1440))
+for itime in range(24):
+    jdayz = (set_jday(int(yymmdd[:4]),int(yymmdd[4:6]),int(yymmdd[6:])) -1) + (itime+.5/24.)
+    for ilat in range(721):
+        for ilon in range(1440):
+            #to avoid processing night time reanalysis
+            sza = zenith(jdayz, lat_era5[ilat], lon_era5[ilon])
+            
+            if sza < 100:
+            
+                indz = np.where((~np.isnan(z_lev[itime,:, ilat, ilon])) & 
+                                (z_lev[itime, :, ilat, ilon] >= 0))
+    
+                #pull out variables for time-step
+                p_l = p_lev[indz]
+                z_l = np.squeeze(z_lev[itime,indz,ilat,ilon])
+                t_l = np.squeeze(t_lev[itime,indz,ilat,ilon])
+                q_l = np.squeeze(q_lev[itime,indz,ilat,ilon])
+                rh_l = np.squeeze(rh_lev[itime,indz,ilat,ilon])
+                o3_l = np.squeeze(o3_lev[itime,indz,ilat,ilon])
+                p_s = p_sfc[itime,ilat,ilon]
+                z_s = z_sfc[itime,ilat,ilon]
+                t_s = t_sfc[itime,ilat,ilon]
+                q_s = q_sfc[itime,ilat,ilon].data
+                rh_s = rh_sfc[itime,ilat,ilon].data
+                
+                #check height/pressure increases/decreases with height
+                if z_s < 0.0:
+                    z_s = 0.
+                if z_s >= z_l[0]: #sometimes surface altitude is higher than level-1 height
+                    z_s = z_l[0] - ((z_s -z_l[0])+.03) # make surface 3 meters lower\
+                    #print('z:', itime,ilat,ilon, z_s - z_l[0])
+                if p_s <= p_l[0]:
+                    p_s = p_l[0] + ((p_l[0] - p_s)+2) # add 2 hps
+                    print('p:', itime,ilat,ilon)
+                if (z_s >= z_l[0]): 
+                    print('z lower:', itime,ilat,ilon, z_s - z_l[0])
+                if (z_s <0.):
+                    print('z less than 0', itime,ilat,ilon, z_s)
+                
+                #combine surface level and pressure level
+                press = np.concatenate(([p_s], p_l))
+                hts = np.concatenate(([z_s], z_l))
+                temps = np.concatenate(([t_s], t_l))
+                qvs = np.concatenate(([q_s], q_l))
+                rhs = np.concatenate(([rh_s], rh_l))
+                o3s = np.concatenate(([o3_l[0]], o3_l))
+                
+                #interpolate to 41 layers
+                lyr = 41
+                
+                x = np.linspace(0, 1, len(press))  # Example x-coordinates, adjust if needed.
+                new_x = np.linspace(0, 1, lyr)  # New x-coordinates for interpolation
+                
+                presx[itime, :, ilat, ilon] = np.interp(new_x, x, press)  
+                hgtx[itime, :, ilat, ilon] = np.interp(new_x, x, hts)
+                rhx[itime, :, ilat, ilon] = np.interp(new_x, x, rhs)
+                tempx[itime, :, ilat, ilon] = np.interp(new_x, x, temps)
+                qvx[itime, :, ilat, ilon] = np.interp(new_x, x, qvs)
+                o3x[itime, :, ilat, ilon] = np.interp(new_x, x, o3s)
+                
+lev_arbt = np.linspace(1,lyr,lyr)
+dims = ('time', 'lev', 'lat', 'lon')
+
+ds_new = xr.Dataset(
+    data_vars= {
+        'p' : (dims, presx, {'units' : 'mb'}),
+        'z' : (dims, hgtx, {'units' : 'km'}),
+        'rh' : (dims, rhx, {'units' : '%'}),
+        't' : (dims, tempx, {'units' : 'kelvin'}),
+        'q' : (dims, qvx, {'units' : 'kg/kg'}),
+        'o3' : (dims, o3x, {'units' : 'g/kg'})
+        },
+        coords={
+            'time' : time_era5,
+            'lev' : lev_arbt,
+            'lat' : lat_era5,
+            'lon' : lon_era5
+            }
+        )
+
+    
+sys.exit()
+    #return ds_new
+
+ 
+
+
+
+
 
 
 #///////////////////////Output Variables to be saved///////////////////////////
@@ -481,6 +667,11 @@ ind_day = np.where(sza_ssf <= 89.5)[0]
 max0 = 100 #30000 #max number of ilg loops that is ran in fortran
 nloop = np.floor(len(ind_day) / max0)
 remainder = ind_day % max0
+
+
+
+    
+    
 
 # # # # # Run Loop for each CCCma ilg loop # # # # #
 for ilg in range(5):#range(nloop+1):
