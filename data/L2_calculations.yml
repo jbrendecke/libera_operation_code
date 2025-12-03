@@ -1,0 +1,211 @@
+# Libera Data Product Definition
+# This file defines the metadata and structure for your science data product
+#
+# Modify the ProductID and version to match your specific data product
+# Update the variables section to match your science data outputs
+#
+# For more information on Libera data product identifiers, see:
+# https://libera-utils.readthedocs.io/en/latest/
+
+static_product_metadata:
+  # Data Product Identifier - change this to match your specific product
+  # Other Examples: L1B_RAD-4CH, L1B_CAM, L2_SSW-TOA-FLUXES-ERBE
+  ProductID: SFC-FLUXES
+
+  # Version number in M.m.p format (Major.minor.patch)
+  version: 1.0.0
+
+# Variable definitions for your science data product
+# Each variable must include: long_name, dimensions, units, valid_range, missing_value, dtype
+variables:
+  time_stamp:
+    long_name: "Time of measurement"
+    dimensions: ["n_samples"]  # n_samples is a dynamic dimension that adjusts to your data size
+    units: datetime64[ns]
+    valid_range: [0, 1]  # This will be updated automatically for datetime variables
+    missing_value: -9999
+    dtype: datetime64
+
+  latitude:
+    long_name: "Geodetic Latitude"
+    dimensions: ["n_samples"]
+    units: "degrees north"  # Watts per square meter per steradian per nanometer
+    valid_range: [-90, 90]  # Adjust based on your expected data range
+    missing_value: -9999.0
+    dtype: float64
+
+  longitude:
+    long_name: "Geodetic Longitude"
+    dimensions: ["n_samples"]
+    units: "degrees west"
+    valid_range: [0, 360]  # Adjust based on your expected uncertainty range
+    missing_value: -9999.0
+    dtype: float64
+
+  SWD_TOA_VIS:
+    long_name: "Downward visible insolation irradiance"
+    dimensions: ["n_samples"]
+    units: "W/m^2"
+    valid_range: [0, 1000]
+    missing_value: -999.0
+    dtype: float64
+
+  SWD_TOA_NIR:
+    long_name: "Downward infrared insolation irradiance"
+    dimensions: ["n_samples"]
+    units: "W/m^2"
+    valid_range: [0, 1000]
+    missing_value: -999.0
+    dtype: float64
+
+  SWU_TOA_VIS_ALL:
+    long_name: "Upward visible TOA irradiance all-sky"
+    dimensions: ["n_samples"]
+    units: "W/m^2" 
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+
+  SWU_TOA_NIR_ALL:
+    long_name: "Upward infrared TOA irradiance all-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+  
+  SWU_TOA_VIS_CLR:
+    long_name: "Upward visible TOA irradiance clear-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000] 
+    missing_value: -9999
+    dtype: float64
+
+  SWU_TOA_NIR_CLR:
+    long_name: "Upward infrared TOA irradiance all-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+
+  SWD_SFC_VIS_ALL:
+    long_name: "Downard visible surface irradiance all-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000] 
+    missing_value: -9999
+    dtype: float64
+
+  SWD_SFC_NIR_ALL:
+    long_name: "Downward infrared surface irradiance all-sky "
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000] 
+    missing_value: -9999
+    dtype: float64
+
+  SWD_SFC_VIS_CLR:
+    long_name: "Downward visible surface irradiance clear-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+
+  SWD_SFC_NIR_CLR:
+    long_name: "Downward infrared surface irradiance clear-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+      
+  SWU_SFC_VIS_ALL:
+    long_name: "Upward visible surface irradiance all-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]
+    missing_value: -9999
+    dtype: float64
+
+  SWU_SFC_NIR_ALL:
+    long_name: "Upward infrared surface irradiance all-sky "
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]
+    missing_value: -9999
+    dtype: float64
+
+  SWU_SFC_VIS_CLR:
+    long_name: "Upward visible surface irradiance clear-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]
+    missing_value: -9999
+    dtype: float64
+
+  SWU_SFC_NIR_CLR:
+    long_name: "Upward infrared surface irradiance clear-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]
+    missing_value: -9999
+    dtype: float64
+
+  DIRECT_SFC_ALL:
+    long_name: "Direct total surface irradiance all-sky "
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+
+  DIFFUSE_SFC_ALL:
+    long_name: "Diffuse total surface irradiance all-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+
+  DIRECT_SFC_CLR:
+    long_name: "Direct total surface irradiance clear-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+
+  DIFFUSE_SFC_CLR:
+    long_name: "Diffuse total surface irradiance clear-sky"
+    dimensions: ["n_samples"]
+    units:  "W/m^2"
+    valid_range: [0, 1000]  
+    missing_value: -9999
+    dtype: float64
+
+# Notes for customization:
+#
+# 1. ProductID: Update this to match your specific data product identifier
+#    Check with your team for the correct naming convention
+#
+# 2. Variables: Add, remove, or modify variables to match your science outputs
+#    - Each variable name should match the keys in your processed_data dictionary
+#    - Dimensions currently use only "n_samples" for 1D time series data
+#    - For 2D/3D data, you can add dimensions like ["n_samples", "n_wavelengths"]
+#
+# 3. Units: Use CF-convention units where possible
+#    See: http://cfconventions.org/Data/cf-standard-names/current/build/cf-standard-name-table.html
+#
+# 4. Valid ranges: Set these based on your actual expected data ranges
+#    This helps with data validation and quality control
+#
+# 5. Missing values: Choose appropriate missing value indicators for each data type
+#    Use values that are clearly outside your valid_range
+#
+# 6. Data types: Common options include:
+#    - "float64" or "float32" for continuous measurements
+#    - "int32" or "int16" for integer data and flags
+#    - "datetime64[ns]" for timestamps

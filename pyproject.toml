@@ -1,0 +1,21 @@
+[tool.poetry]
+package-mode = false
+
+[project]
+name = "libera-l2-calculations-algorithm"
+version = "0.0.1"
+description = "algorithm to run python code to process input variables into the CCCma and read output calculations"
+
+authors = [
+    { name = "Jordann Brendecke, Baike Xi" }
+]
+requires-python = ">=3.11,<4"
+
+dependencies = [
+    "libera-utils==3.2.3rc5",
+    "MetPy==1.7.1"
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.1"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,4 @@
+*.nc
+*.dat
+poetry.lock
+.venv

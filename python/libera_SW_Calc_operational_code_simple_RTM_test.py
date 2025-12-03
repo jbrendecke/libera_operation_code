@@ -18,7 +18,7 @@ from libera_utils import Manifest, smart_open, DataProductConfig
 import glob
 import logging
 import warnings
-warnings.filterwarings('ignore')
+warnings.filterwarnings('ignore')
 
 
 def set_jday(iyr, imo, iday):
@@ -969,17 +969,16 @@ if xx==0:
   #  return ds_output
 
 
-#%%
 
-import time 
-start_time = time.time()
+# import time 
+# start_time = time.time()
 
-year = 2018
-month = 3 
-day = 22
+# year = 2018
+# month = 3 
+# day = 22
 
-#ds_out = L2_calc_main(year,month, day)
+# ds_out = L2_calc_main(year,month, day)
 
 
-end_time = time.time()
-print('Run Time: ',end_time - start_time)
+# end_time = time.time()
+# print('Run Time: ',end_time - start_time)
