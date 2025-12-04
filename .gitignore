@@ -2,3 +2,5 @@
 *.dat
 poetry.lock
 .venv
+err.err
+out.out

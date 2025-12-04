@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Tue Sept 10 12:45:19 2024
-#load imput for CCCma with the inclusion of clouds from CERES SSF running the 
+#load input for CCCma with the inclusion of clouds from CERES SSF running the 
 RTM for each footprint
 First iteration for Libera operation, no CCCma to more easily set things up with docker/AWS
 @author: jbrendecke

@@ -21,6 +21,7 @@ import argparse
 import warnings
 warnings.filterwarnings("ignore")
 
+logger = logging.getLogger(__name__)
 
 def parse_cli_args():
     """
@@ -76,6 +77,8 @@ def set_jday(iyr, imo, iday):
         irow = 0
 
     iddd = idymon[irow][imo-1] + iday
+    
+    logger.info(f'Julian day determined: {iddd}')
     return iddd
 #//////////////////////////////////////////////////////////////////////////////
 
@@ -96,15 +99,19 @@ def read_manifest(input_manifest):
                 all_data[file_info.filename] = dataset
         except NameError:
             print("Error in putting manifest input files into dictionary")
+    logging.info(f'{i} dataset(s) from input manifest saved into dictionary')
     
     #save individual dataset by product 
     for mfile, mds in all_data.items():
         if 'CERES_SSF' in mfile:
             ds_ssf = mds
+            logger.info('CERES_SSF dataset extracted from dictionary')
         if 'ERA5_level' in mfile:
             ds_era5lev = mds
+            logger.info('ERA5 levels dataset extracted from dictionary')
         if 'ERA5_surface' in mfile:
             ds_era5sfc = mds
+            logger.info('ERA5 surface daatset extracted from dictionary')
        
     #Make sure all files are there
     try:
@@ -144,7 +151,7 @@ def mask_era5_sfc(ds_sfc, ds_cer):
     #       dims: time, lev, lat, lon
     #/////////////////////////////////////
     
-
+    logger.info('Begin masking ERA5 sfc ds')
     MAX_TIME_DIFF = np.timedelta64(31, 'm')  # e.g., 31 minutes
     MAX_LAT_DIFF = 0.2  # e.g., 0.2 degrees
     MAX_LON_DIFF = 0.2  # e.g., 0.2 degrees
@@ -157,6 +164,7 @@ def mask_era5_sfc(ds_sfc, ds_cer):
     time_indices = ds_sfc.indexes['valid_time'].get_indexer(ds_cer['time'].values, method='nearest')
     lat_indices = ds_sfc.indexes['latitude'].get_indexer(ds_cer['lat'].values, method='nearest')
     lon_indices = ds_sfc.indexes['longitude'].get_indexer(ds_cer['lon'].values, method='nearest')
+    logger.info('Indices closest to SSF time/lat/lon determined')
     
     # Iterate over all satellite samples
     for i in range(len(ds_cer['time'])):
@@ -176,6 +184,7 @@ def mask_era5_sfc(ds_sfc, ds_cer):
             
             proximity_mask[t_idx, lat_idx, lon_idx] = True
     
+    logger.info('proximity_mask created, True where ERA5 profiles are needed')
     
     # Convert the NumPy mask into an xarray DataArray
     proximity_da = xr.DataArray(
@@ -186,6 +195,8 @@ def mask_era5_sfc(ds_sfc, ds_cer):
     
     # Apply the inverse mask to set unwanted points to NaN
     ds_sfc_masked = ds_sfc.where(proximity_da, drop=False)
+    
+    logger.info('New masked ERA5 surface dataset created')
     return ds_sfc_masked
 #//////////////////////////////////////////////////////////////////////////////
     
@@ -219,25 +230,29 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
     ds_sfc['z'] = (earth_radius * ds_sfc['z'] / (earth_radius - ds_sfc['z']))/1000
     ds_sfc['z'] = ds_sfc['z'].round(decimals=5)
     ds_lev['z'] = ds_lev['z'].round(decimals=5)
+    logging.info('Determined Height from geopotential')
 
     #determine specifc humidity from dewpoint/pressure and it to sfc dataset
     q_sfc = specific_humidity_from_dewpoint(ds_sfc['sp']/100 * units.hPa, ds_sfc['d2m'] * units.kelvin)
     ds_sfc['q'] = q_sfc
     rh_sfc = relative_humidity_from_dewpoint(ds_sfc['t2m'] * units.kelvin, ds_sfc['d2m'] * units.kelvin)*100
     ds_sfc['rh'] = rh_sfc
-   
+    logging.info('Calculated surface relative and specific humidity with Metpy')
+    
     #make sure variables are not negative/ within range
     ds_lev['r'] = ds_lev['r'].clip(min=0, max=100)
     ds_lev['q'] = ds_lev['q'].where(ds_lev['q'] >= 0, 0)
     ds_lev['o3'] = ds_lev['o3'].where(ds_lev['o3'] >= 0, 0)
     ds_lev['t'] = ds_lev['t'].where(ds_lev['t'] >= 0, 300)
+    logging.info('Set ERA5 variables to proper range')
     
     #set variables equal to NaN where pressure levels in levels dataset are higher than surface pressure(i.e. below ground)
     sp = ds_sfc['sp']/100
     expanded_sp = sp.expand_dims({'pressure_level': ds_lev.pressure_level}, axis=1)
     mask = ds_lev.pressure_level > expanded_sp
     ds_lev = ds_lev.where(~mask)
-        
+    logging.info('Masked values where pressure levels are higher than surface pressure')
+    
     #extract variables from era5 
     time_era5 = ds_lev.valid_time.data
     lat_era5 = ds_lev.latitude.data 
@@ -294,9 +309,9 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
                         p_s = p_l[0] + ((p_l[0] - p_s)+2) # add 2 hps
                         
                     if p_s <= p_l[0]:
-                        print('p:', itime,ilat,ilon)
+                        logger.error(f'surface pressure lower than first level at: {itime}, {ilat}, {ilon}')
                     if z_s >= z_l[0]: 
-                        print('z lower:', itime,ilat,ilon, z_s - z_l[0])
+                        logger.error(f'surface elev higher than first level at: {itime}, {ilat}, {ilon}')
                     
                     
                     #combine surface level and pressure level
@@ -318,6 +333,9 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
                     qvx[itime, :, ilat, ilon] = np.interp(new_x, x, qvs)
                     o3x[itime, :, ilat, ilon] = np.interp(new_x, x, o3s)
                     
+                    logger.info(f'ERA5 column sfc/lev dataset combined and interpolated for : \
+                                time index: {itime}. lat index: {ilat}, lon index {ilon}')
+                    
     lev_arbt = np.linspace(1, NLEV, NLEV, dtype=int)
     dims = ('time', 'lev', 'lat', 'lon')
     
@@ -337,7 +355,7 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
                 'lon' : lon_era5
                 }
             )
-    
+    logger.info('All ERA5 new profiles saved into dataset')
     return ds_new   
 #//////////////////////////////////////////////////////////////////////////////
 
@@ -363,7 +381,7 @@ def cloud_profile_constant(hgt, pres, re, lwp, CB_pres, CT_pres):
     cldlevt = np.argmin(abs(CT_pres-pres))
     
     #lwp = (tau * 5 * re*1e-6 *100**3) / 9    
-    
+    logging.info('Begin getting cloud profile for Re/Water content using cloud boundary are ERA5 levels')
     if (cldlevb == cldlevt):
         cldthick = (hgt[cldlevt+1]-hgt[cldlevb])*1000 
         Re_profile_lev[cldlevb:cldlevt+2] = re
@@ -387,6 +405,7 @@ def cloud_profile_constant(hgt, pres, re, lwp, CB_pres, CT_pres):
     if abs(check -lwp) > 0.1:
         logging.error("CLOUD PROFILE NOT CORRECT, LWP OFF: {CHECK} NOT EQUAL TO {LWP)")
                 
+    logging.info('Determined cloud profiles for Re/Water content')
     return WC_profile_lay, Re_profile_lay
 #//////////////////////////////////////////////////////////////////////////////
 
@@ -410,6 +429,7 @@ def cloud_fraction_profile(pres, CB_pres, CT_pres, CF):
     for i in range(cldlevb,cldlevt): 
         CF_profile_lay[i] = (CF_profile_lev[i+1]+CF_profile_lev[i])/2
         
+    logger.info('Cloud Fraction profile determined')
     return CF_profile_lay
 #//////////////////////////////////////////////////////////////////////////////
 
@@ -432,7 +452,8 @@ def get_cloud_profile(dataset_cloud, hgt, pres, lat_fp, lon_fp, time_fp, lyr):
     ric_21_ssf = (dataset_cld['Mean_ice_particle_effective_radius_for_cloud_layer__2_1_'].data)
     ric_37_ssf = (dataset_cld['Mean_ice_particle_effective_radius_for_cloud_layer__3_7_'].data)
     cod_ssf = (dataset_cld['Mean_visible_optical_depth_for_cloud_layer'].data)
-          
+    logger.info('Extracting SSF Cloud Properties')
+    
     #determine cloud properties using MERRA2 Hieghts and CERES SYN Properties
     #cf_ssf = 100 - cf_ssf
     cf_btm = cf_overlap[1]/100
@@ -518,7 +539,7 @@ def get_cloud_profile(dataset_cloud, hgt, pres, lat_fp, lon_fp, time_fp, lyr):
             rc_lw = np.full(nlay, np.nan); ri_lw = np.full(nlay, np.nan)
             cf_lw = np.full(nlay, np.nan)
         
-        
+        logger.info('Determine cloud profiles for single column for different levels')
         #####
         #still some weird cases where bottom liq/ice are record for either
         #top/bottom layer or where top/bottom layer thickness overlaps with
@@ -546,6 +567,7 @@ def get_cloud_profile(dataset_cloud, hgt, pres, lat_fp, lon_fp, time_fp, lyr):
         iwcm = np.zeros(nlay)
         cfm = np.zeros(nlay)
         
+        logger.info('Profiles combined into single profile in final step')
     return rcm, lwcm, rim, iwcm, cfm, cf_tot
 #//////////////////////////////////////////////////////////////////////////////
 
@@ -556,6 +578,7 @@ def simple_RTM(sza, cf, COD, AOD):
     w0 = .85
     asym =.6
     
+    logger.info('Getting direct and diffuse fluxes from simple RTM')
     swd_dir = np.zeros(nlen); swd_dif = np.zeros(nlen)
     swd_dir_clr = np.zeros(nlen); swd_dif_clr = np.zeros(nlen)
     toa = np.zeros(nlen); toa_clr = np.zeros(nlen)
@@ -590,7 +613,7 @@ def simple_RTM(sza, cf, COD, AOD):
             swd_dif_clr[i] = swd_dif[i]
             toa_clr[i] = toa
             
-    
+    logger.info('Estimating VIS/NIR fluxes and for broken clouds')
     swd_toa_nir = 1361 *np.cos(sza *(np.pi/180)) * .55
     swd_toa_vis = 1361 *np.cos(sza *(np.pi/180)) * .45
     swu_toa_all_nir = toa *.55
@@ -630,6 +653,7 @@ def simple_RTM(sza, cf, COD, AOD):
 	    'direct_sfc_all': direct_sfc_all, 'diffuse_sfc_all': diffuse_sfc_all,
 	    'direct_sfc_clr': direct_sfc_clr, 'diffuse_sfc_clr': diffuse_sfc_clr
 	}
+    logger.info('Simple RTM fluxes saved into dictionary')
     return rtm_dict    
 #//////////////////////////////////////////////////////////////////////////////
 
@@ -650,6 +674,7 @@ def L2_calc_main(input_manifest_path):
     
     #read in manifest netcdf files
     ds_ssf, ds_lev, ds_sfc = read_manifest(input_manifest)
+    logger.info('Successfully load ERA5 and CERES SSF Datasets')
     
     time_st = ds_ssf.time.data[0]
     time_ed = ds_ssf.time.data[-1]
@@ -674,7 +699,7 @@ def L2_calc_main(input_manifest_path):
     #ds_ssf = xr.open_dataset(filessf[0])
     
     #only testing 1 hour for now
-    ds_ssf = ds_ssf.isel(time=slice(0,99400)) #1hr
+    #ds_ssf = ds_ssf.isel(time=slice(0,99400)) #1hr
     
     #make longitude from 0-360
     new_long = np.mod(ds_ssf['lon'], 360) 
@@ -690,6 +715,7 @@ def L2_calc_main(input_manifest_path):
     aod_ocean = (ds_ssf['PSF_wtd_MOD04_effective_optical_depth_average_ocean__0_550_'].data)
     igbp = (ds_ssf['Surface_type_index'].data)
     ntime=len(time_ssf)
+    logger.info('Extracted non-cloud SSF properties')
     
     #time in CERES file is number of days from 1970 and because of that, datatime is wrong, this fixes it
     # correct_date = np.datetime64(f'{iyr}-{smonth0}-{sday0}T00:00:00')
@@ -703,18 +729,18 @@ def L2_calc_main(input_manifest_path):
     igbp = igbp[:,0]
     #adjust to CCCma ID
     igbp = np.int_(igbp + 40)
-    
+    logger.info('Adjusted IGBP intergers to match CCCma')
  
-    
     #////////////////////////ERA5 Atmospheric Profiles////////////////////////////
     #for first hour     
-    ds_lev = ds_lev.isel(valid_time=[0])
-    ds_sfc = ds_sfc.isel(valid_time=[0])
+    #ds_lev = ds_lev.isel(valid_time=[0])
+    #ds_sfc = ds_sfc.isel(valid_time=[0])
     
     #process era5 profiles
     ds_sfc = mask_era5_sfc(ds_sfc, ds_ssf)
+    logger.info('Successfully Masked ERA5 Surface Data for grids needed')
     ds_era5 = combine_era5_reanalysis(ds_lev, ds_sfc, NLEV)
-    print('ERA5 processed')
+    logger.info('Sucessfully combined surface and levels ERA5 datasets')
     
     #///////////////////////Output Variables to be saved///////////////////////////
     swd_toa_vis = np.zeros(ntime); swu_toa_all_vis = np.zeros(ntime); swu_toa_clr_vis = np.zeros(ntime);
@@ -734,8 +760,9 @@ def L2_calc_main(input_manifest_path):
     remainder = len(ind_day) % MAXI
   
     # # # # # Run Loop for each CCCma ilg loop # # # # #
+    logger.info('Starting ilg loop')
     for ilg in range(NLOOP+1):
-        print(ilg)
+        print(f'starting loop {ilg+1} of {NLOOP+1} loops')
         #determine footprints with daylight
         if ilg == NLOOP:
             #for last remaining footprints
@@ -769,6 +796,7 @@ def L2_calc_main(input_manifest_path):
     
         # # # # # RUN LOOP FOR EACH FOOTPRINT # # # # #
         kk=0
+        logger.info(f'Starting ii loop on loop number {ilg} of ilg')
         for ii in indi:
             # Determine Aerosol Properties
             #AOD
@@ -793,7 +821,6 @@ def L2_calc_main(input_manifest_path):
             #Temperature, QV, O3 should have 40 levels
             ds_era5ii = ds_era5.sel(time = time_ssf[ii], lat=lat_ssf[ii], 
                                     lon = lon_ssf[ii], method='nearest')
-            
             pres = ds_era5ii['p'].data
             ht = ds_era5ii['z'].data
             temp = ds_era5ii['t'].data
@@ -801,8 +828,11 @@ def L2_calc_main(input_manifest_path):
             rh = ds_era5ii['rh'].data
             o3 = ds_era5ii['o3'].data
             
+            logger.info(f'Extracted ERA5 profile for ilg:{ilg} & ii:{ii}')
+            
             if ((np.any(np.isnan(pres))) | (np.any(np.isnan(ht))) | (np.any(np.isnan(temp))) | 
                 (np.any(np.isnan(qv))) | (np.any(np.isnan(rh))) | (np.any(np.isnan(o3)))):
+                logger.error('Nan values present in ERA5 profile extraction')
                 raise ValueError('Nan values present in ERA5 profile extraction')
             
             #these variables need layer average
@@ -822,9 +852,11 @@ def L2_calc_main(input_manifest_path):
             rc, lwc, ri, iwc, cf_p, cf_tot = get_cloud_profile(ds_ssf, ht, pres, 
                                                                lat_ssf[ii], lon_ssf[ii],
                                                                time_ssf[ii], NLEV)
+            logger.info(f'Proccessed Cloud properties to detemine profile for ilg:{ilg} & ii:{ii}')
             
             if ((np.any(np.isnan(rc))) | (np.any(np.isnan(ri))) | (np.any(np.isnan(lwc))) | 
                 (np.any(np.isnan(iwc))) | (np.any(np.isnan(cf_p))) | (np.isnan(cf_tot))):
+                logger.error('Nan values present in cloud profile ')
                 raise ValueError('Nan values present in cloud profile')
                 
             relx[kk, :] = np.flip(rc)
@@ -843,8 +875,10 @@ def L2_calc_main(input_manifest_path):
             #/////////////
             kk += 1
     
+        logger.info('All individual columns processed for ilg:{ilg} loop')
         # # # # # Run Simple RTM # # # # #
         rtm_dic= simple_RTM(sza, cft, cod, aod)
+        logger.info('Output recieved for simple RTM')
         
         swd_toa_nir[indi] = rtm_dic['swd_toa_nir']
         swd_toa_vis[indi] = rtm_dic['swd_toa_vis']
@@ -986,7 +1020,7 @@ def L2_calc_main(input_manifest_path):
         'DIRECT_SFC_CLR':  direct_sfc_clr,
         'DIFFUSE_SFC_CLR': diffuse_sfc_clr
         }
-    
+    logger.info('All Fluxes saved into dictionary')
     #ds_output = xr.Dataset(output_dict, coords=coords_dict)
     #ds_output.to_netcdf(f'/home/CCCma/L2/output/Allsky_SimpleRTM_era5_SSF_{yymmdd}.nc')
     
@@ -994,19 +1028,28 @@ def L2_calc_main(input_manifest_path):
     # # # # # Write the NetCDF file(s) # # # # #
     #path to .yml file
     yml_filepath = '/home/jbrendecke/L2/data/L2_calculations.yml'
+    if not os.path.isfile(yml_filepath):
+       raise FileNotFoundError(
+           f"Product definition file not found: {yml_filepath}\n"
+           "Please ensure example_product_definition.yml is in the data folder."
+       )
+       
     # use libera-utils to config object using .yml file
+    logger.info("Setting up data product configuration")
     product_config = DataProductConfig.from_data_config_file(yml_filepath)
 
     #add science variables to config object, "name variable" must be same as in .yml
+    logger.info("Adding processed data to variables")
     for var_name, var_data in output_dict.items():
         product_config.add_data_to_variable(var_name, var_data)
     
-    
+    logger.info('Getting start and end times')
     time_start = time_st.astype('datetime64[us]').astype(datetime)
     time_end = time_ed.astype('datetime64[us]').astype(datetime)
     time_start = time_start.replace(tzinfo = timezone.utc)
     time_end = time_end.replace(tzinfo = timezone.utc)
     
+    logger.info(f"Writing/saveing data product to {output_folder}")
     output_path = product_config.write( 
                         folder_location=output_folder,
                         start_time = time_start,
@@ -1018,8 +1061,9 @@ def L2_calc_main(input_manifest_path):
 
     # 2. Add the new files you created to it (can be local or S3 paths)
     # (Here, we'll use the filename we generated earlier)
+    logger.info('Saving output Manifest file to {output_path}')
     output_manifest.add_files(output_path)
-    print(output_manifest)
+    #print(output_manifest)
     # 3. Write the final manifest to a specified location
     output_manifest.write(output_folder)
     
@@ -1027,7 +1071,7 @@ def L2_calc_main(input_manifest_path):
     return
 #//////////////////////////////////////////////////////////////////////////////
 
-#%%
+
 
 import time 
 start_time = time.time()
@@ -1042,12 +1086,13 @@ args = parse_cli_args()
 if not args.manifest:
     raise ValueError("Manifest file path must be provided as a command line argument")
 input_manifest_path = args.manifest
+logger.info('Input Arguments retrieved')
 
 # delete output manifest file if already created, creates error if exist
 check_manifest_out = input_manifest_path.replace('INPUT', 'OUTPUT')
 if os.path.isfile(check_manifest_out):
     subprocess.run([f'rm {check_manifest_out}'], shell=True)
-    print('Deleted Previous Ouput Manifest File')
+    logger.info('Deleted Previous Ouput Manifest File')
 
 ds_out = L2_calc_main(input_manifest_path)
 
