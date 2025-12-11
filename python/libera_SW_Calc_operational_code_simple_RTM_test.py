@@ -19,7 +19,7 @@ import glob
 import logging
 import warnings
 warnings.filterwarnings('ignore')
-
+import sys
 
 def set_jday(iyr, imo, iday):
 #    ; Determine Julian Day from Calendar Day
@@ -115,8 +115,8 @@ def mask_era5_sfc(ds_sfc, ds_cer):
     
 
     MAX_TIME_DIFF = np.timedelta64(31, 'm')  # e.g., 31 minutes
-    MAX_LAT_DIFF = 0.2  # e.g., 0.2 degrees
-    MAX_LON_DIFF = 0.2  # e.g., 0.2 degrees
+    MAX_LAT_DIFF = 0.2  # e.g., 0.25 degrees
+    MAX_LON_DIFF = 0.2  # e.g., 0.25 degrees
     
     # Initialize a mask with all False (no grid points are close yet)
     mask_shape = (len(ds_sfc['valid_time']), len(ds_sfc['latitude']), len(ds_sfc['longitude']))
@@ -145,6 +145,8 @@ def mask_era5_sfc(ds_sfc, ds_cer):
             
             proximity_mask[t_idx, lat_idx, lon_idx] = True
     
+        proximity_mask[:,:,0] = True
+        proximity_mask[:,:,-1] = True
     
     # Convert the NumPy mask into an xarray DataArray
     proximity_da = xr.DataArray(
@@ -226,12 +228,12 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
     nlat = len(lat_era5)
     nlon = len(lon_era5)
     
-    presx = np.zeros((ntime,NLEV,nlat,nlon))
-    hgtx = np.zeros((ntime,NLEV,nlat,nlon))
-    tempx = np.zeros((ntime,NLEV,nlat,nlon))
-    qvx = np.zeros((ntime,NLEV,nlat,nlon))
-    rhx = np.zeros((ntime,NLEV,nlat,nlon))
-    o3x = np.zeros((ntime,NLEV,nlat,nlon))
+    presx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    hgtx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    tempx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    qvx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    rhx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    o3x = np.full((ntime,NLEV,nlat,nlon), np.nan)
     for itime in range(ntime):
         for ilat in range(nlat):
             for ilon in range(nlon):
@@ -257,10 +259,10 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
                     rh_s = rh_sfc[itime,ilat,ilon]
                     
                     #check height/pressure increases/decreases with height
-                    if z_s >= z_l[0]: #sometimes surface altitude is higher than level-1 height
-                        z_s = z_l[0] - ((z_s -z_l[0])+.03) # make surface 3 meters lower than lowest level
-                    if p_s <= p_l[0]:
-                        p_s = p_l[0] + ((p_l[0] - p_s)+2) # add 2 hps
+                    if (z_s >= z_l[0]) or (z_l[0]- z_s < 0.001): #surface alitude needs to be lower than lowest level
+                        z_s = z_l[0] - ((z_s -z_l[0])+.005) # make surface 5 meters lower than lowest level
+                    if (p_s <= p_l[0]) or (p_s - p_l[0] < 0.01): #same but for pressure
+                        p_s = p_l[0] + ((p_l[0] - p_s) + 1) # add 1 hpa
                         
                     if p_s <= p_l[0]:
                         print('p:', itime,ilat,ilon)
@@ -382,7 +384,7 @@ def cloud_fraction_profile(pres, CB_pres, CT_pres, CF):
     return CF_profile_lay
 #//////////////////////////////////////////////////////////////////////////////
 
-def get_cloud_profile(dataset_cloud, hgt, pres, lat_fp, lon_fp, time_fp, lyr):
+def get_cloud_profile(dataset_cloud, hgt, pres, time_fp, lyr):
     # determine cloud profiles bases on CERES SSF Input
     # Inputs: 
     # CERES Nc file dataset
@@ -601,18 +603,13 @@ def simple_RTM(sza, cf, COD, AOD):
     return rtm_dict    
 #//////////////////////////////////////////////////////////////////////////////
 
-
+import glob
 #def L2_calc_main(iyr,imon, iday):
 xx=0
 if xx==0: 
     iyr=2018
     imon=3
     iday=22
-    # Main function 
-    #//////////////////////////////////////////////////////////////////////////////
-    NLEV = 41
-    NLAY = NLEV - 1
-    
     
     iyr = int(iyr)
     imon = int(imon)
@@ -622,26 +619,56 @@ if xx==0:
     sday0 = f"{iday:02}"
     yymmdd = f"{iyr}{smonth0}{sday0}"
     
-    jday_int = set_jday(int(yymmdd[0:4]), int(yymmdd[4:6]), int(yymmdd[6:]))   
-    if (int(yymmdd[4:6]) >=3) & (int(yymmdd[4:6]) <= 8):
-        season = 1
-    else:
-        season = 0
-        
-        
-        
-        
-    #//////////////////LOAD SSF Non-cloud properties///////////////////////////////
+
+    #/////////// Main function ///////////
+    NLEV = 41 # number of atmospheric levels for calculations
+    NLAY = NLEV - 1
+    MAXI = 20000 #max number of ilg loops that is ran in fortran (breaks over 20,000)
+    
     path_ceres ='/home/CCCma/L2/input_data/CERES/'
     filessf = glob.glob(path_ceres+'*'+yymmdd+'*.nc')
     ds_ssf = xr.open_dataset(filessf[0])
     
-    #only testing 1 hour for now
-    ds_ssf = ds_ssf.isel(time=slice(0,99400)) #1hr
     
-    time_ssf=np.array(ds_ssf.time).copy()
-    lon_ssf = np.array(ds_ssf.lon)
-    lat_ssf = np.array(ds_ssf.lat)
+    file_lev = glob.glob('/home/CCCma/L2/input_data/ERA5/levels/*level*'+yymmdd+'*.nc')[0]
+    file_sfc = glob.glob('/home/CCCma/L2/input_data/ERA5/surface/*surface*'+yymmdd+'*.nc')[0]
+    
+    
+    #open dataset and combine with function
+    ds_lev = xr.open_dataset(file_lev)
+    ds_sfc = xr.open_dataset(file_sfc)
+    ds_sfc['valid_time'] = ds_sfc['valid_time'] + np.timedelta64(30, 'm')
+    ds_lev['valid_time'] = ds_lev['valid_time'] + np.timedelta64(30, 'm')
+   
+    
+    ds_ssf = ds_ssf.isel(time=slice(2200000, -1))
+    ds_sfc = ds_sfc.isel(valid_time = slice(23,24))
+    ds_lev = ds_lev.isel(valid_time = slice(23,24))
+
+
+
+    jday_int = set_jday(iyr, imon, iday)   
+    if (imon >=3) & (imon <= 8):
+        season = 1
+    else:
+        season = 0
+   
+    #//////////////////LOAD SSF Non-cloud properties///////////////////////////////
+    #path_ceres ='/home/CCCma/L2/input_data/CERES/'
+    #filessf = glob.glob(path_ceres+'*'+yymmdd+'*.nc')
+    #ds_ssf = xr.open_dataset(filessf[0])
+    
+    #only testing 1 hour for now
+    #ds_ssf = ds_ssf.isel(time=slice(0,99400)) #1hr
+    
+    #make longitude from 0-360
+    new_long = np.mod(ds_ssf['lon'], 360) 
+    ds_ssf = ds_ssf.assign_coords(lon=new_long)
+    
+    #pull out variables
+    time_ssf = ds_ssf['time'].data
+    lon_ssf = ds_ssf['lon'].data
+    lat_ssf = ds_ssf['lat'].data
     cod_ssf = (ds_ssf['Mean_visible_optical_depth_for_cloud_layer'].data)
     sza_ssf = (ds_ssf['CERES_solar_zenith_at_surface'].data)
     aod_land = (ds_ssf['PSF_wtd_MOD04_deep_blue_aerosol_optical_depth_land__0_550_'].data)
@@ -650,45 +677,26 @@ if xx==0:
     ntime=len(time_ssf)
     
     #time in CERES file is number of days from 1970 and because of that, datatime is wrong, this fixes it
-    correct_date = np.datetime64(f'{iyr}-{smonth0}-{sday0}T00:00:00')
-    time_ssf = correct_date + (time_ssf - time_ssf[0])
-    time_check = str(time_ssf[0])
-    if (time_check[:4] != str(iyr)) & (time_check[5:7] != smonth0) & (time_check[8:10] != sday0):
-        raise ValueError('SSF date does not match input date')
-    
-    #make longitude from 0-360
-    new_long = np.mod(ds_ssf['lon'], 360) 
-    ds_ssf = ds_ssf.assign_coords(lon=new_long)
+    # correct_date = np.datetime64(f'{iyr}-{smonth0}-{sday0}T00:00:00')
+    # time_ssf = correct_date + (time_ssf - time_ssf[0])
+    # time_check = str(time_ssf[0])
+    # if (time_check[:4] != str(iyr)) & (time_check[5:7] != smonth0) & (time_check[8:10] != sday0):
+    #     raise ValueError('SSF date does not match input date')
+      
     
     #right now assume most dominant scene type is used/includes snow
     igbp = igbp[:,0]
     #adjust to CCCma ID
     igbp = np.int_(igbp + 40)
-    
-    
-    
-    
+ 
     #////////////////////////ERA5 Atmospheric Profiles////////////////////////////
-    file_lev = glob.glob('/home/CCCma/L2/input_data/ERA5/levels/*level*'+yymmdd+'*.nc')[0]
-    file_sfc = glob.glob('/home/CCCma/L2/input_data/ERA5/surface/*surface*'+yymmdd+'*.nc')[0]
-    
-    if not os.path.isfile(file_lev) | os.path.isfile(file_sfc):
-        logging.error('ERA5 File Not Found')
-        raise ValueError('ERA5 File Not Found')
-    
-    #open dataset and combine with function
-    ds_lev = xr.open_dataset(file_lev)
-    ds_sfc = xr.open_dataset(file_sfc)
-    
-    
     #for first hour     
-    ds_lev = ds_lev.isel(valid_time=[0])
-    ds_sfc = ds_sfc.isel(valid_time=[0])
+    #ds_lev = ds_lev.isel(valid_time=[0])
+    #ds_sfc = ds_sfc.isel(valid_time=[0])
     
     #process era5 profiles
     ds_sfc = mask_era5_sfc(ds_sfc, ds_ssf)
     ds_era5 = combine_era5_reanalysis(ds_lev, ds_sfc, NLEV)
-    
     
     #///////////////////////Output Variables to be saved///////////////////////////
     swd_toa_vis = np.zeros(ntime); swu_toa_all_vis = np.zeros(ntime); swu_toa_clr_vis = np.zeros(ntime);
@@ -704,43 +712,41 @@ if xx==0:
     #//////////////////RUN CKD CODE FOR EACH SSF////////////
     #select out daylight SSFs
     ind_day = np.where(sza_ssf <= 89.5)[0]
-    max0 = 20000 #max number of ilg loops that is ran in fortran
-    nloop = int(np.floor(len(ind_day) / max0))
-    remainder = len(ind_day) % max0
+    NLOOP = int(np.floor(len(ind_day) / MAXI))
+    remainder = len(ind_day) % MAXI
   
     # # # # # Run Loop for each CCCma ilg loop # # # # #
-    for ilg in range(nloop+1):
-       
+    for ilg in  range(NLOOP, NLOOP+1): #range(NLOOP+1):
+        print(f'starting loop {ilg+1} of {NLOOP+1} loops')
         #determine footprints with daylight
-        if ilg == nloop:
+        if ilg == NLOOP:
             #for last remaining footprints
             indi = ind_day[len(ind_day)-remainder:]
         else:
-            # most footprints; length equals max0
-            indi = ind_day[max0*ilg:max0*(ilg+1)]
-        nfoots = len(indi)
-        
-        
+            # most footprints; length equals MAXI
+            indi = ind_day[MAXI*ilg:MAXI*(ilg+1)]
+        NFOOTS = len(indi)
+                
         #save properties for RTM Input
         cod = cod_ssf[indi]
         sza = sza_ssf[indi]
         igbptyp = igbp[indi]
         
-        aod = np.zeros(nfoots)
-        aodtype = np.zeros(nfoots, dtype=int)
-        ind20km = np.zeros(nfoots, dtype=int)
-        presx = np.zeros((nfoots, NLEV))
-        htx = np.zeros((nfoots, NLEV))
-        rhx = np.zeros((nfoots, NLEV))
-        tempx = np.zeros((nfoots, NLAY))
-        qvx = np.zeros((nfoots, NLAY))
-        o3x = np.zeros((nfoots, NLAY))
-        relx = np.zeros((nfoots, NLAY))
-        reix = np.zeros((nfoots, NLAY))
-        lwcx = np.zeros((nfoots, NLAY))
-        iwcx = np.zeros((nfoots, NLAY))
-        cf_px = np.zeros((nfoots, NLAY))
-        cft = np.zeros(nfoots)
+        aod = np.zeros(NFOOTS)
+        aodtype = np.zeros(NFOOTS, dtype=int)
+        ind20km = np.zeros(NFOOTS, dtype=int)
+        presx = np.zeros((NFOOTS, NLEV))
+        htx = np.zeros((NFOOTS, NLEV))
+        rhx = np.zeros((NFOOTS, NLEV))
+        tempx = np.zeros((NFOOTS, NLAY))
+        qvx = np.zeros((NFOOTS, NLAY))
+        o3x = np.zeros((NFOOTS, NLAY))
+        relx = np.zeros((NFOOTS, NLAY))
+        reix = np.zeros((NFOOTS, NLAY))
+        lwcx = np.zeros((NFOOTS, NLAY))
+        iwcx = np.zeros((NFOOTS, NLAY))
+        cf_px = np.zeros((NFOOTS, NLAY))
+        cft = np.zeros(NFOOTS)
     
         # # # # # RUN LOOP FOR EACH FOOTPRINT # # # # #
         kk=0
@@ -763,12 +769,16 @@ if xx==0:
             else:
                 aodtype[kk] = 2
             
+            if lon_ssf[ii] > 359.88:
+                lon_ssfii = 0.0
+            else:
+                lon_ssfii =lon_ssf[ii]
+                
             #/////////////Save ERA5 Profile/////////////
             #Pressure, Hieght, RH should have 41 levels
             #Temperature, QV, O3 should have 40 levels
             ds_era5ii = ds_era5.sel(time = time_ssf[ii], lat=lat_ssf[ii], 
-                                    lon = lon_ssf[ii], method='nearest')
-            
+                                    lon = lon_ssfii, method='nearest')
             pres = ds_era5ii['p'].data
             ht = ds_era5ii['z'].data
             temp = ds_era5ii['t'].data
@@ -776,10 +786,11 @@ if xx==0:
             rh = ds_era5ii['rh'].data
             o3 = ds_era5ii['o3'].data
             
+        
             if ((np.any(np.isnan(pres))) | (np.any(np.isnan(ht))) | (np.any(np.isnan(temp))) | 
                 (np.any(np.isnan(qv))) | (np.any(np.isnan(rh))) | (np.any(np.isnan(o3)))):
-                raise ValueError('Nan values present in ERA5 profile extraction')
-            
+                raise ValueError(f'Nan values present in ERA5 profile extraction ilg:{ilg} / ii:{ii}')
+                
             #these variables need layer average
             tempm = np.zeros(NLAY)
             qvm = np.zeros(NLAY)
@@ -794,13 +805,12 @@ if xx==0:
             
             #/////////////Save Cloud Profile///////////
             #40 levels of Re liq, Re ice, LWC & IWC, and CF
-            rc, lwc, ri, iwc, cf_p, cf_tot = get_cloud_profile(ds_ssf, ht, pres, 
-                                                               lat_ssf[ii], lon_ssf[ii],
+            rc, lwc, ri, iwc, cf_p, cf_tot = get_cloud_profile(ds_ssf, ht, pres,
                                                                time_ssf[ii], NLEV)
             
             if ((np.any(np.isnan(rc))) | (np.any(np.isnan(ri))) | (np.any(np.isnan(lwc))) | 
                 (np.any(np.isnan(iwc))) | (np.any(np.isnan(cf_p))) | (np.isnan(cf_tot))):
-                raise ValueError('Nan values present in cloud profile')
+                raise ValueError(f'Nan values present in cloud profile ilg:{ilg} / ii:{ii}')
                 
             relx[kk, :] = np.flip(rc)
             reix[kk, :] = np.flip(ri)
@@ -818,103 +828,105 @@ if xx==0:
             #/////////////
             kk += 1
     
+            #error on ii=29 of ilg =323
+        
         # # # # # Run Simple RTM # # # # #
-        rtm_dic= simple_RTM(sza, cft, cod, aod)
+        # rtm_dic= simple_RTM(sza, cft, cod, aod)
+        # logger.info('Output recieved for simple RTM')
         
-        swd_toa_nir[indi] = rtm_dic['swd_toa_nir']
-        swd_toa_vis[indi] = rtm_dic['swd_toa_vis']
-        swu_toa_all_nir[indi] = rtm_dic['swu_toa_all_nir']
-        swu_toa_all_vis[indi] = rtm_dic['swu_toa_all_vis']
-        swu_toa_clr_nir[indi] = rtm_dic['swu_toa_clr_nir']
-        swu_toa_clr_vis[indi] = rtm_dic['swu_toa_clr_vis']
-        swd_sfc_all_nir[indi] = rtm_dic['swd_sfc_all_nir']
-        swd_sfc_all_vis[indi] = rtm_dic['swd_sfc_all_vis']
-        swd_sfc_clr_nir[indi] = rtm_dic['swd_sfc_clr_nir']
-        swd_sfc_clr_vis[indi] = rtm_dic['swd_sfc_clr_vis']
-        swu_sfc_all_nir[indi] = rtm_dic['swu_sfc_all_nir']
-        swu_sfc_all_vis[indi] = rtm_dic['swu_sfc_all_vis']
-        swu_sfc_clr_nir[indi] = rtm_dic['swu_sfc_clr_nir']
-        swu_sfc_clr_vis[indi] = rtm_dic['swu_sfc_clr_vis']
-        direct_sfc_all[indi] = rtm_dic['direct_sfc_all']
-        diffuse_sfc_all[indi] = rtm_dic['diffuse_sfc_all']
-        direct_sfc_clr[indi] = rtm_dic['direct_sfc_clr']
-        diffuse_sfc_clr[indi] = rtm_dic['diffuse_sfc_clr']
+        # swd_toa_nir[indi] = rtm_dic['swd_toa_nir']
+        # swd_toa_vis[indi] = rtm_dic['swd_toa_vis']
+        # swu_toa_all_nir[indi] = rtm_dic['swu_toa_all_nir']
+        # swu_toa_all_vis[indi] = rtm_dic['swu_toa_all_vis']
+        # swu_toa_clr_nir[indi] = rtm_dic['swu_toa_clr_nir']
+        # swu_toa_clr_vis[indi] = rtm_dic['swu_toa_clr_vis']
+        # swd_sfc_all_nir[indi] = rtm_dic['swd_sfc_all_nir']
+        # swd_sfc_all_vis[indi] = rtm_dic['swd_sfc_all_vis']
+        # swd_sfc_clr_nir[indi] = rtm_dic['swd_sfc_clr_nir']
+        # swd_sfc_clr_vis[indi] = rtm_dic['swd_sfc_clr_vis']
+        # swu_sfc_all_nir[indi] = rtm_dic['swu_sfc_all_nir']
+        # swu_sfc_all_vis[indi] = rtm_dic['swu_sfc_all_vis']
+        # swu_sfc_clr_nir[indi] = rtm_dic['swu_sfc_clr_nir']
+        # swu_sfc_clr_vis[indi] = rtm_dic['swu_sfc_clr_vis']
+        # direct_sfc_all[indi] = rtm_dic['direct_sfc_all']
+        # diffuse_sfc_all[indi] = rtm_dic['diffuse_sfc_all']
+        # direct_sfc_clr[indi] = rtm_dic['direct_sfc_clr']
+        # diffuse_sfc_clr[indi] = rtm_dic['diffuse_sfc_clr']
         
         
-        # # RUN CCCma
-        # ctx=nfoots
-        # os.chdir('/home/CCCma/L2/CCCma_code/ver10/')
-        # pathi ='/home/CCCma/L2/CCCma_code/ver10/input/'
-        # patho ='/home/CCCma/L2/CCCma_code/ver10/output/'
+        # RUN CCCma
+        ctx=NFOOTS
+        path_cccma = '/home/jbrendecke/L2/CCCma_code/ver10/'
+        os.chdir(path_cccma)
         
-        # #WRITE INPUT FILE AND ADJUST UA_MAIN.F90
-        # with open('UA_main.F90', 'r') as file:
-        #     dmain = file.readlines()
+        #WRITE INPUT FILE AND ADJUST UA_MAIN.F90
+        with open('UA_main.F90', 'r') as file:
+            dmain = file.readlines()
     
-        # dmain[4] = f'   parameter (lay = {NLAY}, lev = lay +1, ilg={ctx}, il1 = 1, il2 = {ctx}, modlay=34, nxloc=100)\n'
+        dmain[4] = f'   parameter (lay = {NLAY}, lev = lay +1, ilg={ctx}, il1 = 1, il2 = {ctx}, modlay=34, nxloc=100)\n'
     
-        # with open('UA_main.F90', 'w') as file:
-        #     file.writelines(dmain)
+        with open('UA_main.F90', 'w') as file:
+            file.writelines(dmain)
         
-        # with open('input.dat', 'w') as file:
-        #     for k in range(nfoots):
-        #         file.write(f"{sza[k]:11.4f} {aod[k]:11.4f} {igbptyp[k]:4d} {season:4d} {aodtype[k]:4d} {jday_int:5d} {cft[k]:7.4f}\n")
-        #         for ilyr in range(NLAY):
-        #             file.write(f"{htx[k,ilyr]:10.4f} {rhx[k,ilyr]:9.4f} {presx[k,ilyr]:9.4f} {tempx[k,ilyr]:9.4f}" 
-        #                        f"{qvx[k,ilyr]:11.4e} {o3x[k,ilyr]:11.4e} {lwcx[k,ilyr]:9.4f} {iwcx[k,ilyr]:9.4f}"
-        #                        f"{relx[k,ilyr]:9.4f} {reix[k,ilyr]:9.4f} {cf_px[k,ilyr]:9.4f}\n")
+        with open('input.dat', 'w') as file:
+            for k in range(NFOOTS):
+                file.write(f"{sza[k]:11.4f} {aod[k]:11.4f} {igbptyp[k]:4d} {season:4d} {aodtype[k]:4d} {jday_int:5d} {cft[k]:7.4f}\n")
+                for ilyr in range(NLAY):
+                    file.write(f"{htx[k,ilyr]:10.4f} {rhx[k,ilyr]:9.4f} {presx[k,ilyr]:9.4f} {tempx[k,ilyr]:9.4f}" 
+                               f"{qvx[k,ilyr]:11.4e} {o3x[k,ilyr]:11.4e} {lwcx[k,ilyr]:9.4f} {iwcx[k,ilyr]:9.4f}"
+                               f"{relx[k,ilyr]:9.4f} {reix[k,ilyr]:9.4f} {cf_px[k,ilyr]:9.4f}\n")
                     
-        #         file.write(f"{htx[k,ilyr+1]:10.4f} {rhx[k,ilyr+1]:9.4f} {presx[k,ilyr+1]:9.4f}\n")
+                file.write(f"{htx[k,ilyr+1]:10.4f} {rhx[k,ilyr+1]:9.4f} {presx[k,ilyr+1]:9.4f}\n")
             
-        # #RUN THE CCCMA
-        # subprocess.run(['gfortran *.F90'], shell=True)
-        # subprocess.run(['./a.out'], shell=True)
-        # subprocess.run(['cp input.dat '+pathi+'input.dat'], shell=True)
-        # subprocess.run(['cp output.dat '+patho+'output.dat'], shell=True)
+        #RUN THE CCCMA
+        subprocess.run(['gfortran *.F90'], shell=True)
+        subprocess.run(['./a.out'], shell=True)
+        #subprocess.run(['cp input.dat '+pathi+'input.dat'], shell=True)
+        #subprocess.run(['cp output.dat '+patho+'output.dat'], shell=True)
     
-        # #read CCCma output file
-        # output_file = glob.glob(patho+'output.dat')
-        # nlines=49
-        # swd_toa_vis_ = np.zeros(nfoots)
-        # swd_toa_nir_ = np.zeros(nfoots)
-        # swu_toa_all_vis_ = np.zeros(nfoots)
-        # swu_toa_all_nir_ = np.zeros(nfoots)
-        # swu_toa_clr_vis_ = np.zeros(nfoots)
-        # swu_toa_clr_nir_ = np.zeros(nfoots)
-        # swd_sfc_all_vis_ = np.zeros(nfoots)
-        # swd_sfc_all_nir_ = np.zeros(nfoots)
-        # swd_sfc_clr_vis_ = np.zeros(nfoots)
-        # swd_sfc_clr_nir_ = np.zeros(nfoots)
-        # swu_sfc_all_vis_ = np.zeros(nfoots)
-        # swu_sfc_all_nir_ = np.zeros(nfoots)
-        # swu_sfc_clr_vis_ = np.zeros(nfoots)
-        # swu_sfc_clr_nir_ = np.zeros(nfoots)
-        # direct_sfc_all_ = np.zeros(nfoots)
-        # diffuse_sfc_all_ = np.zeros(nfoots)
-        # direct_sfc_clr_ = np.zeros(nfoots)
-        # diffuse_sfc_clr_ = np.zeros(nfoots)
+        #read CCCma output file
+        output_file = path_cccma+'output.dat'
+        nlines=49
+        swd_toa_vis_ = np.zeros(NFOOTS)
+        swd_toa_nir_ = np.zeros(NFOOTS)
+        swu_toa_all_vis_ = np.zeros(NFOOTS)
+        swu_toa_all_nir_ = np.zeros(NFOOTS)
+        swu_toa_clr_vis_ = np.zeros(NFOOTS)
+        swu_toa_clr_nir_ = np.zeros(NFOOTS)
+        swd_sfc_all_vis_ = np.zeros(NFOOTS)
+        swd_sfc_all_nir_ = np.zeros(NFOOTS)
+        swd_sfc_clr_vis_ = np.zeros(NFOOTS)
+        swd_sfc_clr_nir_ = np.zeros(NFOOTS)
+        swu_sfc_all_vis_ = np.zeros(NFOOTS)
+        swu_sfc_all_nir_ = np.zeros(NFOOTS)
+        swu_sfc_clr_vis_ = np.zeros(NFOOTS)
+        swu_sfc_clr_nir_ = np.zeros(NFOOTS)
+        direct_sfc_all_ = np.zeros(NFOOTS)
+        diffuse_sfc_all_ = np.zeros(NFOOTS)
+        direct_sfc_clr_ = np.zeros(NFOOTS)
+        diffuse_sfc_clr_ = np.zeros(NFOOTS)
         
-        # with open(output_file[0], 'r') as ofile:
-        #     lines = ofile.readlines()
-        #     for i in range(nfoots):
-        #         swd_toa_vis_[i] =(float(lines[1+(i*nlines)].split()[3]))
-        #         swd_toa_nir_[i] =(float(lines[1+(i*nlines)].split()[4]))
-        #         swu_toa_all_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[1]))
-        #         swu_toa_all_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[2]))
-        #         swu_toa_clr_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[5]))
-        #         swu_toa_clr_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[6]))
-        #         swd_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[3]))
-        #         swd_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[4]))
-        #         swd_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[7]))
-        #         swd_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[8]))
-        #         swu_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[1]))
-        #         swu_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[2]))
-        #         swu_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[5]))
-        #         swu_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[6]))
-        #         direct_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[0]))
-        #         diffuse_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[1]))
-        #         direct_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[0]))
-        #         diffuse_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[1]))
+        with open(output_file, 'r') as ofile:
+            lines = ofile.readlines()
+            for i in range(NFOOTS):
+                swd_toa_vis_[i] =(float(lines[1+(i*nlines)].split()[3]))
+                swd_toa_nir_[i] =(float(lines[1+(i*nlines)].split()[4]))
+                swu_toa_all_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[1]))
+                swu_toa_all_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[2]))
+                swu_toa_clr_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[5]))
+                swu_toa_clr_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[6]))
+                swd_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[3]))
+                swd_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[4]))
+                swd_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[7]))
+                swd_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[8]))
+                swu_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[1]))
+                swu_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[2]))
+                swu_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[5]))
+                swu_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[6]))
+                direct_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[0]))
+                diffuse_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[1]))
+                direct_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[0]))
+                diffuse_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[1]))
                 
                 
         # swd_toa_vis[indi] = swd_toa_vis_
@@ -935,10 +947,35 @@ if xx==0:
         # swu_sfc_clr_vis[indi] = swu_sfc_clr_vis_
         # direct_sfc_clr[indi] = direct_sfc_clr_
         # diffuse_sfc_clr[indi] = diffuse_sfc_all_
-          
+        
+        swd_toa_vis[indi] = swd_toa_vis_
+        swd_toa_nir[indi] = swd_toa_nir_       
+        swu_toa_all_nir[indi] = (swu_toa_all_nir_)
+        swu_toa_all_vis[indi] = (swu_toa_all_vis_)
+        swd_sfc_all_nir[indi] = (swd_sfc_all_nir_) 
+        swd_sfc_all_vis[indi] = (swd_sfc_all_vis_) 
+        swu_sfc_all_nir[indi] = (swu_sfc_all_nir_) 
+        swu_sfc_all_vis[indi] = (swu_sfc_all_vis_) 
+        direct_sfc_all[indi] = (direct_sfc_all_)     
+        diffuse_sfc_all[indi] = (diffuse_sfc_all_) 
+        swu_toa_clr_nir[indi] = swu_toa_clr_nir_
+        swu_toa_clr_vis[indi] = swu_toa_clr_vis_
+        swd_sfc_clr_nir[indi] = swd_sfc_clr_nir_
+        swd_sfc_clr_vis[indi] = swd_sfc_clr_vis_
+        swu_sfc_clr_nir[indi] = swu_sfc_clr_nir_
+        swu_sfc_clr_vis[indi] = swu_sfc_clr_vis_
+        direct_sfc_clr[indi] = direct_sfc_clr_
+        diffuse_sfc_clr[indi] = diffuse_sfc_all_
+    
+        if len(np.where(np.isnan(swd_sfc_all_vis_))[0]) >= 1:
+            sys.exit()
+        
         
     #SAVE AS NETCDF
     output_dict ={
+        'time_stamp' : (('time'), time_ssf),
+        'longitude' : (('time'), lon_ssf),
+        'latitude' :  (('time'), lat_ssf),
         'SWD_TOA_VIS': (('time'), swd_toa_vis),
         'SWD_TOA_NIR': (('time'), swd_toa_nir),
         'SWU_TOA_VIS_ALL': (('time'), swu_toa_all_vis),
@@ -964,7 +1001,7 @@ if xx==0:
         }
     
     ds_output = xr.Dataset(output_dict, coords=coords_dict)
-    #ds_output.to_netcdf(f'/home/CCCma/L2/output/Allsky_SimpleRTM_era5_SSF_{yymmdd}.nc')
+    #ds_output.to_netcdf(f'/home/jbrendecke/L2/Allsky_CCCma_era5_SSF_{yymmdd}_test.nc')
     
   #  return ds_output
 

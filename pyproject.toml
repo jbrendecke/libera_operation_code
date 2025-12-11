@@ -12,7 +12,7 @@ authors = [
 requires-python = ">=3.11,<4"
 
 dependencies = [
-    "libera-utils==3.2.3rc5",
+    "libera-utils==4.0.0",
     "MetPy==1.7.1"
 ]
 

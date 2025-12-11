@@ -2,7 +2,7 @@
    use albedo_motran, only : albedom
    use psizes_19, only : nbs, nbl
 
-   parameter (lay = 40, lev = lay +1, ilg=16829, il1 = 1, il2 = 16829, modlay=34, nxloc=100)
+   parameter (lay = 40, lev = lay +1, ilg=15045, il1 = 1, il2 = 15045, modlay=34, nxloc=100)
    !   implicit real (a-h,o-z), integer (i-n)
    
    real, dimension (ilg,lev) :: flxu, flxd, flxuc, flxdc

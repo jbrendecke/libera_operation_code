@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Created on Tue Sept 10 12:45:19 2024
 #load imput for CCCma with the inclusion of clouds from CERES SSF running the 
@@ -183,6 +181,9 @@ def mask_era5_sfc(ds_sfc, ds_cer):
             lon_diff < MAX_LON_DIFF):
             
             proximity_mask[t_idx, lat_idx, lon_idx] = True
+        
+        proximity_mask[:,:,0] = True
+        proximity_mask[:,:,-1] = True
     
     logger.info('proximity_mask created, True where ERA5 profiles are needed')
     
@@ -272,12 +273,13 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
     nlat = len(lat_era5)
     nlon = len(lon_era5)
     
-    presx = np.zeros((ntime,NLEV,nlat,nlon))
-    hgtx = np.zeros((ntime,NLEV,nlat,nlon))
-    tempx = np.zeros((ntime,NLEV,nlat,nlon))
-    qvx = np.zeros((ntime,NLEV,nlat,nlon))
-    rhx = np.zeros((ntime,NLEV,nlat,nlon))
-    o3x = np.zeros((ntime,NLEV,nlat,nlon))
+    
+    presx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    hgtx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    tempx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    qvx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    rhx = np.full((ntime,NLEV,nlat,nlon), np.nan)
+    o3x = np.full((ntime,NLEV,nlat,nlon), np.nan)
     for itime in range(ntime):
         for ilat in range(nlat):
             for ilon in range(nlon):
@@ -300,13 +302,13 @@ def combine_era5_reanalysis(ds_lev, ds_sfc, NLEV):
                     z_s = z_sfc[itime,ilat,ilon]
                     t_s = t_sfc[itime,ilat,ilon]
                     q_s = q_sfc[itime,ilat,ilon]
-                    rh_s = rh_sfc[itime,ilat,ilon]
-                    
+                    rh_s = rh_sfc[itime,ilat,ilon]                
+                        
                     #check height/pressure increases/decreases with height
-                    if z_s >= z_l[0]: #sometimes surface altitude is higher than level-1 height
-                        z_s = z_l[0] - ((z_s -z_l[0])+.03) # make surface 3 meters lower than lowest level
-                    if p_s <= p_l[0]:
-                        p_s = p_l[0] + ((p_l[0] - p_s)+2) # add 2 hps
+                    if (z_s >= z_l[0]) or (z_l[0]- z_s < 0.001): #surface alitude needs to be lower than lowest level
+                        z_s = z_l[0] - ((z_s -z_l[0])+.005) # make surface 5 meters lower than lowest level
+                    if (p_s <= p_l[0]) or (p_s - p_l[0] < 0.01): #same but for pressure
+                        p_s = p_l[0] + ((p_l[0] - p_s) + 1) # add 1 hpa
                         
                     if p_s <= p_l[0]:
                         logger.error(f'surface pressure lower than first level at: {itime}, {ilat}, {ilon}')
@@ -433,7 +435,7 @@ def cloud_fraction_profile(pres, CB_pres, CT_pres, CF):
     return CF_profile_lay
 #//////////////////////////////////////////////////////////////////////////////
 
-def get_cloud_profile(dataset_cloud, hgt, pres, lat_fp, lon_fp, time_fp, lyr):
+def get_cloud_profile(dataset_cloud, hgt, pres, time_fp, lyr):
     # determine cloud profiles bases on CERES SSF Input
     # Inputs: 
     # CERES Nc file dataset
@@ -667,7 +669,7 @@ def L2_calc_main(input_manifest_path):
     MAXI = 20000 #max number of ilg loops that is ran in fortran (breaks over 20,000)
     
     #in terminal set environment vairale: PROCESSING_PATH:
-    # # export PROCESSING_PATH="/home/jbrendecke/L2/data/"
+    # # # export PROCESSING_PATH="/home/jbrendecke/L2/data/"
     output_folder = os.getenv("PROCESSING_PATH")
     if not output_folder:
         raise ValueError("PROCESSING_PATH environment variable is not set")
@@ -675,7 +677,7 @@ def L2_calc_main(input_manifest_path):
     #read in manifest netcdf files
     ds_ssf, ds_lev, ds_sfc = read_manifest(input_manifest)
     logger.info('Successfully load ERA5 and CERES SSF Datasets')
-    
+
     time_st = ds_ssf.time.data[0]
     time_ed = ds_ssf.time.data[-1]
 
@@ -735,6 +737,10 @@ def L2_calc_main(input_manifest_path):
     #for first hour     
     #ds_lev = ds_lev.isel(valid_time=[0])
     #ds_sfc = ds_sfc.isel(valid_time=[0])
+    
+    #add 30 mintues to hour for consitency
+    ds_sfc['valid_time'] = ds_sfc['valid_time'] + np.timedelta64(30, 'm')
+    ds_lev['valid_time'] = ds_lev['valid_time'] + np.timedelta64(30, 'm')
     
     #process era5 profiles
     ds_sfc = mask_era5_sfc(ds_sfc, ds_ssf)
@@ -814,13 +820,20 @@ def L2_calc_main(input_manifest_path):
             elif abs(lat_ssf[ii]) > 70:
                 aodtype[kk] = 5
             else:
-                aodtype[kk] = 2
+                aodtype[kk] = 2        
             
             #/////////////Save ERA5 Profile/////////////
             #Pressure, Hieght, RH should have 41 levels
             #Temperature, QV, O3 should have 40 levels
+            
+            #doesnt find nearest longitude of 0 above this value
+            if lon_ssf[ii] > 359.88:
+                lon_ssfii = 0.0
+            else:
+                lon_ssfii =lon_ssf[ii]
+            
             ds_era5ii = ds_era5.sel(time = time_ssf[ii], lat=lat_ssf[ii], 
-                                    lon = lon_ssf[ii], method='nearest')
+                                    lon = lon_ssfii, method='nearest')
             pres = ds_era5ii['p'].data
             ht = ds_era5ii['z'].data
             temp = ds_era5ii['t'].data
@@ -832,8 +845,7 @@ def L2_calc_main(input_manifest_path):
             
             if ((np.any(np.isnan(pres))) | (np.any(np.isnan(ht))) | (np.any(np.isnan(temp))) | 
                 (np.any(np.isnan(qv))) | (np.any(np.isnan(rh))) | (np.any(np.isnan(o3)))):
-                logger.error('Nan values present in ERA5 profile extraction')
-                raise ValueError('Nan values present in ERA5 profile extraction')
+                raise ValueError(f'Nan values present in ERA5 profile extraction ilg:{ilg} / ii:{ii}')
             
             #these variables need layer average
             tempm = np.zeros(NLAY)
@@ -850,8 +862,8 @@ def L2_calc_main(input_manifest_path):
             #/////////////Save Cloud Profile///////////
             #40 levels of Re liq, Re ice, LWC & IWC, and CF
             rc, lwc, ri, iwc, cf_p, cf_tot = get_cloud_profile(ds_ssf, ht, pres, 
-                                                               lat_ssf[ii], lon_ssf[ii],
                                                                time_ssf[ii], NLEV)
+            
             logger.info(f'Proccessed Cloud properties to detemine profile for ilg:{ilg} & ii:{ii}')
             
             if ((np.any(np.isnan(rc))) | (np.any(np.isnan(ri))) | (np.any(np.isnan(lwc))) | 
@@ -876,104 +888,107 @@ def L2_calc_main(input_manifest_path):
             kk += 1
     
         logger.info('All individual columns processed for ilg:{ilg} loop')
+        
         # # # # # Run Simple RTM # # # # #
-        rtm_dic= simple_RTM(sza, cft, cod, aod)
-        logger.info('Output recieved for simple RTM')
+        # rtm_dic= simple_RTM(sza, cft, cod, aod)
+        # logger.info('Output recieved for simple RTM')
         
-        swd_toa_nir[indi] = rtm_dic['swd_toa_nir']
-        swd_toa_vis[indi] = rtm_dic['swd_toa_vis']
-        swu_toa_all_nir[indi] = rtm_dic['swu_toa_all_nir']
-        swu_toa_all_vis[indi] = rtm_dic['swu_toa_all_vis']
-        swu_toa_clr_nir[indi] = rtm_dic['swu_toa_clr_nir']
-        swu_toa_clr_vis[indi] = rtm_dic['swu_toa_clr_vis']
-        swd_sfc_all_nir[indi] = rtm_dic['swd_sfc_all_nir']
-        swd_sfc_all_vis[indi] = rtm_dic['swd_sfc_all_vis']
-        swd_sfc_clr_nir[indi] = rtm_dic['swd_sfc_clr_nir']
-        swd_sfc_clr_vis[indi] = rtm_dic['swd_sfc_clr_vis']
-        swu_sfc_all_nir[indi] = rtm_dic['swu_sfc_all_nir']
-        swu_sfc_all_vis[indi] = rtm_dic['swu_sfc_all_vis']
-        swu_sfc_clr_nir[indi] = rtm_dic['swu_sfc_clr_nir']
-        swu_sfc_clr_vis[indi] = rtm_dic['swu_sfc_clr_vis']
-        direct_sfc_all[indi] = rtm_dic['direct_sfc_all']
-        diffuse_sfc_all[indi] = rtm_dic['diffuse_sfc_all']
-        direct_sfc_clr[indi] = rtm_dic['direct_sfc_clr']
-        diffuse_sfc_clr[indi] = rtm_dic['diffuse_sfc_clr']
+        # swd_toa_nir[indi] = rtm_dic['swd_toa_nir']
+        # swd_toa_vis[indi] = rtm_dic['swd_toa_vis']
+        # swu_toa_all_nir[indi] = rtm_dic['swu_toa_all_nir']
+        # swu_toa_all_vis[indi] = rtm_dic['swu_toa_all_vis']
+        # swu_toa_clr_nir[indi] = rtm_dic['swu_toa_clr_nir']
+        # swu_toa_clr_vis[indi] = rtm_dic['swu_toa_clr_vis']
+        # swd_sfc_all_nir[indi] = rtm_dic['swd_sfc_all_nir']
+        # swd_sfc_all_vis[indi] = rtm_dic['swd_sfc_all_vis']
+        # swd_sfc_clr_nir[indi] = rtm_dic['swd_sfc_clr_nir']
+        # swd_sfc_clr_vis[indi] = rtm_dic['swd_sfc_clr_vis']
+        # swu_sfc_all_nir[indi] = rtm_dic['swu_sfc_all_nir']
+        # swu_sfc_all_vis[indi] = rtm_dic['swu_sfc_all_vis']
+        # swu_sfc_clr_nir[indi] = rtm_dic['swu_sfc_clr_nir']
+        # swu_sfc_clr_vis[indi] = rtm_dic['swu_sfc_clr_vis']
+        # direct_sfc_all[indi] = rtm_dic['direct_sfc_all']
+        # diffuse_sfc_all[indi] = rtm_dic['diffuse_sfc_all']
+        # direct_sfc_clr[indi] = rtm_dic['direct_sfc_clr']
+        # diffuse_sfc_clr[indi] = rtm_dic['diffuse_sfc_clr']
         
         
-        # # RUN CCCma
-        # ctx=NFOOTS
-        # os.chdir('/home/CCCma/L2/CCCma_code/ver10/')
-        # pathi ='/home/CCCma/L2/CCCma_code/ver10/input/'
-        # patho ='/home/CCCma/L2/CCCma_code/ver10/output/'
+        # RUN CCCma
+        ctx=NFOOTS
+        path_cccma = '/home/jbrendecke/L2/CCCma_code/ver10/'
+        os.chdir(path_cccma)
         
-        # #WRITE INPUT FILE AND ADJUST UA_MAIN.F90
-        # with open('UA_main.F90', 'r') as file:
-        #     dmain = file.readlines()
+        #WRITE INPUT FILE AND ADJUST UA_MAIN.F90
+        logger.info(f'Starting to write CCCma input file for loop:{ilg}')
+        with open('UA_main.F90', 'r') as file:
+            dmain = file.readlines()
     
-        # dmain[4] = f'   parameter (lay = {NLAY}, lev = lay +1, ilg={ctx}, il1 = 1, il2 = {ctx}, modlay=34, nxloc=100)\n'
+        dmain[4] = f'   parameter (lay = {NLAY}, lev = lay +1, ilg={ctx}, il1 = 1, il2 = {ctx}, modlay=34, nxloc=100)\n'
     
-        # with open('UA_main.F90', 'w') as file:
-        #     file.writelines(dmain)
+        with open('UA_main.F90', 'w') as file:
+            file.writelines(dmain)
         
-        # with open('input.dat', 'w') as file:
-        #     for k in range(NFOOTS):
-        #         file.write(f"{sza[k]:11.4f} {aod[k]:11.4f} {igbptyp[k]:4d} {season:4d} {aodtype[k]:4d} {jday_int:5d} {cft[k]:7.4f}\n")
-        #         for ilyr in range(NLAY):
-        #             file.write(f"{htx[k,ilyr]:10.4f} {rhx[k,ilyr]:9.4f} {presx[k,ilyr]:9.4f} {tempx[k,ilyr]:9.4f}" 
-        #                        f"{qvx[k,ilyr]:11.4e} {o3x[k,ilyr]:11.4e} {lwcx[k,ilyr]:9.4f} {iwcx[k,ilyr]:9.4f}"
-        #                        f"{relx[k,ilyr]:9.4f} {reix[k,ilyr]:9.4f} {cf_px[k,ilyr]:9.4f}\n")
+        with open('input.dat', 'w') as file:
+            for k in range(NFOOTS):
+                file.write(f"{sza[k]:11.4f} {aod[k]:11.4f} {igbptyp[k]:4d} {season:4d} {aodtype[k]:4d} {jday_int:5d} {cft[k]:7.4f}\n")
+                for ilyr in range(NLAY):
+                    file.write(f"{htx[k,ilyr]:10.4f} {rhx[k,ilyr]:9.4f} {presx[k,ilyr]:9.4f} {tempx[k,ilyr]:9.4f}" 
+                               f"{qvx[k,ilyr]:11.4e} {o3x[k,ilyr]:11.4e} {lwcx[k,ilyr]:9.4f} {iwcx[k,ilyr]:9.4f}"
+                               f"{relx[k,ilyr]:9.4f} {reix[k,ilyr]:9.4f} {cf_px[k,ilyr]:9.4f}\n")
                     
-        #         file.write(f"{htx[k,ilyr+1]:10.4f} {rhx[k,ilyr+1]:9.4f} {presx[k,ilyr+1]:9.4f}\n")
+                file.write(f"{htx[k,ilyr+1]:10.4f} {rhx[k,ilyr+1]:9.4f} {presx[k,ilyr+1]:9.4f}\n")
             
-        # #RUN THE CCCMA
-        # subprocess.run(['gfortran *.F90'], shell=True)
-        # subprocess.run(['./a.out'], shell=True)
-        # subprocess.run(['cp input.dat '+pathi+'input.dat'], shell=True)
-        # subprocess.run(['cp output.dat '+patho+'output.dat'], shell=True)
+        #RUN THE CCCMA
+        logger.info('Starting Fortran CCCma code for loop:{ilg}')
+        subprocess.run(['gfortran *.F90'], shell=True)
+        subprocess.run(['./a.out'], shell=True)
+        #subprocess.run(['cp input.dat '+pathi+'input.dat'], shell=True)
+        #subprocess.run(['cp output.dat '+patho+'output.dat'], shell=True)
     
-        # #read CCCma output file
-        # output_file = glob.glob(patho+'output.dat')
-        # nlines=49
-        # swd_toa_vis_ = np.zeros(NFOOTS)
-        # swd_toa_nir_ = np.zeros(NFOOTS)
-        # swu_toa_all_vis_ = np.zeros(NFOOTS)
-        # swu_toa_all_nir_ = np.zeros(NFOOTS)
-        # swu_toa_clr_vis_ = np.zeros(NFOOTS)
-        # swu_toa_clr_nir_ = np.zeros(NFOOTS)
-        # swd_sfc_all_vis_ = np.zeros(NFOOTS)
-        # swd_sfc_all_nir_ = np.zeros(NFOOTS)
-        # swd_sfc_clr_vis_ = np.zeros(NFOOTS)
-        # swd_sfc_clr_nir_ = np.zeros(NFOOTS)
-        # swu_sfc_all_vis_ = np.zeros(NFOOTS)
-        # swu_sfc_all_nir_ = np.zeros(NFOOTS)
-        # swu_sfc_clr_vis_ = np.zeros(NFOOTS)
-        # swu_sfc_clr_nir_ = np.zeros(NFOOTS)
-        # direct_sfc_all_ = np.zeros(NFOOTS)
-        # diffuse_sfc_all_ = np.zeros(NFOOTS)
-        # direct_sfc_clr_ = np.zeros(NFOOTS)
-        # diffuse_sfc_clr_ = np.zeros(NFOOTS)
+        #read CCCma output file
+        logger.info(f'Starting to read CCCma output file for loop:{ilg}')
+        output_file = path_cccma+'output.dat'
+        nlines=49
+        swd_toa_vis_ = np.zeros(NFOOTS)
+        swd_toa_nir_ = np.zeros(NFOOTS)
+        swu_toa_all_vis_ = np.zeros(NFOOTS)
+        swu_toa_all_nir_ = np.zeros(NFOOTS)
+        swu_toa_clr_vis_ = np.zeros(NFOOTS)
+        swu_toa_clr_nir_ = np.zeros(NFOOTS)
+        swd_sfc_all_vis_ = np.zeros(NFOOTS)
+        swd_sfc_all_nir_ = np.zeros(NFOOTS)
+        swd_sfc_clr_vis_ = np.zeros(NFOOTS)
+        swd_sfc_clr_nir_ = np.zeros(NFOOTS)
+        swu_sfc_all_vis_ = np.zeros(NFOOTS)
+        swu_sfc_all_nir_ = np.zeros(NFOOTS)
+        swu_sfc_clr_vis_ = np.zeros(NFOOTS)
+        swu_sfc_clr_nir_ = np.zeros(NFOOTS)
+        direct_sfc_all_ = np.zeros(NFOOTS)
+        diffuse_sfc_all_ = np.zeros(NFOOTS)
+        direct_sfc_clr_ = np.zeros(NFOOTS)
+        diffuse_sfc_clr_ = np.zeros(NFOOTS)
         
-        # with open(output_file[0], 'r') as ofile:
-        #     lines = ofile.readlines()
-        #     for i in range(NFOOTS):
-        #         swd_toa_vis_[i] =(float(lines[1+(i*nlines)].split()[3]))
-        #         swd_toa_nir_[i] =(float(lines[1+(i*nlines)].split()[4]))
-        #         swu_toa_all_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[1]))
-        #         swu_toa_all_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[2]))
-        #         swu_toa_clr_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[5]))
-        #         swu_toa_clr_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[6]))
-        #         swd_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[3]))
-        #         swd_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[4]))
-        #         swd_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[7]))
-        #         swd_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[8]))
-        #         swu_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[1]))
-        #         swu_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[2]))
-        #         swu_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[5]))
-        #         swu_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[6]))
-        #         direct_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[0]))
-        #         diffuse_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[1]))
-        #         direct_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[0]))
-        #         diffuse_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[1]))
+        with open(output_file, 'r') as ofile:
+            lines = ofile.readlines()
+            for i in range(NFOOTS):
+                swd_toa_vis_[i] =(float(lines[1+(i*nlines)].split()[3]))
+                swd_toa_nir_[i] =(float(lines[1+(i*nlines)].split()[4]))
+                swu_toa_all_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[1]))
+                swu_toa_all_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[2]))
+                swu_toa_clr_vis_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[5]))
+                swu_toa_clr_nir_[i] =(float(lines[ind20km[i]+(i*nlines)+1].split()[6]))
+                swd_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[3]))
+                swd_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[4]))
+                swd_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[7]))
+                swd_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[8]))
+                swu_sfc_all_vis_[i] =(float(lines[41+(i*nlines)].split()[1]))
+                swu_sfc_all_nir_[i] =(float(lines[41+(i*nlines)].split()[2]))
+                swu_sfc_clr_vis_[i] =(float(lines[41+(i*nlines)].split()[5]))
+                swu_sfc_clr_nir_[i] =(float(lines[41+(i*nlines)].split()[6]))
+                direct_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[0]))
+                diffuse_sfc_all_[i] =(float(lines[(nlines-5)+(i*nlines)].split()[1]))
+                direct_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[0]))
+                diffuse_sfc_clr_[i] =(float(lines[(nlines-2)+(i*nlines)].split()[1]))
                 
                 
         # swd_toa_vis[indi] = swd_toa_vis_
@@ -994,7 +1009,29 @@ def L2_calc_main(input_manifest_path):
         # swu_sfc_clr_vis[indi] = swu_sfc_clr_vis_
         # direct_sfc_clr[indi] = direct_sfc_clr_
         # diffuse_sfc_clr[indi] = diffuse_sfc_all_
-          
+        
+        logger.info('Putting loop output into complete output varibales for loop:{ilg}')
+        swd_toa_vis[indi] = swd_toa_vis_
+        swd_toa_nir[indi] = swd_toa_nir_       
+        swu_toa_all_nir[indi] = (swu_toa_all_nir_)
+        swu_toa_all_vis[indi] = (swu_toa_all_vis_)
+        swd_sfc_all_nir[indi] = (swd_sfc_all_nir_) 
+        swd_sfc_all_vis[indi] = (swd_sfc_all_vis_) 
+        swu_sfc_all_nir[indi] = (swu_sfc_all_nir_) 
+        swu_sfc_all_vis[indi] = (swu_sfc_all_vis_) 
+        direct_sfc_all[indi] = (direct_sfc_all_)     
+        diffuse_sfc_all[indi] = (diffuse_sfc_all_) 
+        swu_toa_clr_nir[indi] = swu_toa_clr_nir_
+        swu_toa_clr_vis[indi] = swu_toa_clr_vis_
+        swd_sfc_clr_nir[indi] = swd_sfc_clr_nir_
+        swd_sfc_clr_vis[indi] = swd_sfc_clr_vis_
+        swu_sfc_clr_nir[indi] = swu_sfc_clr_nir_
+        swu_sfc_clr_vis[indi] = swu_sfc_clr_vis_
+        direct_sfc_clr[indi] = direct_sfc_clr_
+        diffuse_sfc_clr[indi] = diffuse_sfc_all_
+        
+        if len(np.where(np.isnan(swd_sfc_all_vis_))[0]) >= 1:
+            print(f'Nan value in ilg:{ilg}')
         
     #SAVE AS NETCDF
     output_dict ={
